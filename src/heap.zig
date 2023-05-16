@@ -109,6 +109,7 @@ pub fn Intrusive(
                 if (b.heap.next) |b_next| {
                     a.heap.next = b_next;
                     b_next.heap.prev = a;
+                    b.heap.next = null;
                 }
 
                 // If A has a child, then B becomes the leftmost sibling
@@ -339,4 +340,80 @@ test "heap: million values" {
     }
     try testing.expect(h.deleteMin() == null);
     try testing.expect(count == NUM_TIMERS);
+}
+test "dangling next pointer" {
+    const Elem = struct {
+        const Self = @This();
+        value: usize = 0,
+        heap: IntrusiveField(Self) = .{},
+    };
+
+    const Heap = Intrusive(Elem, void, (struct {
+        fn less(ctx: void, a: *Elem, b: *Elem) bool {
+            _ = ctx;
+            return a.value < b.value;
+        }
+    }).less);
+    var h: Heap = .{ .context = {} };
+
+    var e88: Elem = .{ .value = 88 };
+    var e94: Elem = .{ .value = 94 };
+    var e90: Elem = .{ .value = 90 };
+    var e97: Elem = .{ .value = 97 };
+    var e92: Elem = .{ .value = 92 };
+    var e93: Elem = .{ .value = 93 };
+    var e91: Elem = .{ .value = 91 };
+
+    h.root = &e88;
+    e88.heap.child = &e90;
+    e90.heap.prev = &e88;
+    e90.heap.next = &e94;
+    e94.heap.prev = &e90;
+    e94.heap.child = &e97;
+    e97.heap.prev = &e94;
+    e94.heap.next = &e92;
+    e92.heap.prev = &e94;
+    e92.heap.child = &e93;
+    e93.heap.prev = &e92;
+    e92.heap.next = &e91;
+    e91.heap.prev = &e92;
+
+    h.remove(&e88);
+    if ((e91.heap.child != null and e91.heap.child.? == &e92) and
+        (e94.heap.next != null and e94.heap.next.? == &e92))
+    {
+        return error.CantBeBothChildAndNext;
+    }
+
+    //printDotGraph(Elem, h.root.?);
+}
+
+// Use printDotGraph to get visual representation of the heap.
+// For example (run test with printDotGraph in it, remove start end lines, use dot cli to create image):
+// zig test --test-filter dangling heap.zig 2>&1 | cat | sed '/dangling/,/^OK/!d;//d' |  dot -Tsvg > out.svg && open out.svg
+//
+// Or just copy digraph and paste it to the https://dreampuf.github.io/GraphvizOnline/
+fn printDotGraph(comptime T: type, root: *T) void {
+    const print = std.debug.print;
+    print("\ndigraph {{\n", .{});
+    printPointers(T, root, null);
+    print("}}\n", .{});
+}
+
+fn printPointers(comptime T: type, e: *T, prev: ?*T) void {
+    const print = std.debug.print;
+    if (prev) |p| {
+        if (e.heap.prev != p) {
+            print("\t{d} -> {d} [label=\"prev missing\"];\n", .{ e.value, p.value });
+            print("\t{d} -> {d} [label=\"prev\"];\n", .{ e.value, e.heap.prev.?.value });
+        }
+    }
+    if (e.heap.child) |c| {
+        print("\t{d} -> {d} [label=\"child\"];\n", .{ e.value, c.value });
+        printPointers(T, c, e);
+    }
+    if (e.heap.next) |n| {
+        print("\t{d} -> {d} [label=\"next\"];\n", .{ e.value, n.value });
+        printPointers(T, n, e);
+    }
 }
